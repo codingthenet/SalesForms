@@ -1,0 +1,25 @@
+html.js #salesforms-security-fields fieldset.collapsible {
+  max-height:400px;
+}
+
+html.js #salesforms-security-fields fieldset.collapsible .fieldset-wrapper {
+  -moz-box-shadow:0 0 5px #AAA inset;
+  -webkit-box-shadow:0 0 5px #AAA inset;
+  box-shadow:0 0 5px #AAA inset;
+  max-height:380px;
+  overflow:auto;
+  padding-left:10px;
+}
+
+html.js #salesforms-security-fields fieldset.collapsible fieldset.collapsible {
+  max-height:300px;
+}
+
+html.js #salesforms-security-fields fieldset.collapsible fieldset.collapsible .fieldset-wrapper {
+  -moz-box-shadow:0 0 5px #AAA inset;
+  -webkit-box-shadow:0 0 5px #AAA inset;
+  box-shadow:0 0 5px #AAA inset;
+  max-height:280px;
+  overflow:auto;
+  padding-left:10px;
+}

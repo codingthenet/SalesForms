@@ -1,0 +1,162 @@
+<?php
+// $Id$
+
+/**
+ * @file
+ *   Salesforms module installer & schema.
+ */
+
+/**
+ * Implementation of hook_schema().
+ */
+
+function salesforms_schema() {
+  
+  $schema = array();
+  
+  $schema['salesforms_fieldmaps'] = array(
+    'description' => 'A table linking webform fields to salesforce object fields.',
+    'fields' => array(
+      'mid' => array(
+        'description' => t('The unique fieldmap id'),
+        'type' => 'serial',
+        'size' => 'small',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'fid' => array(
+        'description' => t('The unique field id'),
+        'type' => 'int',
+        'size' => 'small',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'form_id' => array(
+        'description' => t('The Drupal form id.'),
+        'type' => 'varchar',
+        'length' => 130,
+        'not null' => TRUE,
+      ),
+      'form_field' => array(
+        'description' => t('The Drupal form field.'),
+        'type' => 'varchar',
+        'length' => 130,
+        'not null' => TRUE,
+      ),
+      'external_id' => array(
+        'description' => t('A pre-set Salesforce external id for reference'),
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'internal_id' => array(
+        'description' => t('The internal id of the Salesforce object'),
+        'type' => 'varchar',
+        'length' => 50,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+    ),
+    'primary key' => array('mid', 'form_id', 'form_field', 'fid'),
+  );
+  
+  $schema['salesforms_safe_fields'] = array(
+    'description' => 'The table of safe fields for safe objects.',
+    'fields' => array(
+      'fid' => array(
+        'description' => t('The unique field id'),
+        'type' => 'serial',
+        'size' => 'small',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'object_name' => array(
+        'description' => 'The object name.',
+        'type' => 'varchar',
+        'length' => 44, // Will this have to cope with escaping? Needs to be min 44 to cope with __c
+        'not null' => TRUE,
+      ),
+      'field_name' => array(
+        'description' => 'The field name.',
+        'type' => 'varchar',
+        'length' => 44,
+        'not null' => TRUE,
+      ),
+      'reference_to' => array(
+        'description' => 'If the field is a reference, what object it refers to.',
+        'type' => 'varchar',
+        'length' => 44,
+        'not null' => TRUE,
+      ),
+      'required' => array(
+        'description' => 'Boolean value.',
+        'type' => 'int',
+        'size' => 'tiny',
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'default_val' => array(
+        'description' => 'The default value.',
+        'type' => 'varchar',
+        'length' => 100,
+        'not null' => TRUE,
+      ),
+    ),
+    'primary key' => array('fid', 'object_name', 'field_name'),
+  );
+  
+  $schema['salesforms_object_results'] = array(
+    'description' => 'A table linking webform fields to salesforce object fields.',
+    'fields' => array(
+      'obid' => array(
+        'description' => t('The unique object id'),
+        'type' => 'serial',
+        'size' => 'small',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'sid' => array(
+        'description' => t('The webform submission id'),
+        'type' => 'int',
+        'size' => 'small',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'object_type' => array(
+        'description' => 'The Salesforce object type.',
+        'type' => 'varchar',
+        'length' => 130,
+        'not null' => TRUE,
+      ),
+      'object_id' => array(
+        'description' => 'The Salesforce object id.',
+        'type' => 'varchar',
+        'length' => 130,
+        'not null' => TRUE,
+      ),
+    ),
+    'indexes' => array(
+      'submission_id' => array('sid'),
+    ),
+    'primary key' => array('obid'),
+  );
+  
+  return $schema;
+}
+
+/**
+ * Implementation of hook_install().
+ */
+
+function salesforms_install() {
+  drupal_install_schema('salesforms');
+}
+
+/**
+ * Implementation of hook_uninstall().
+ */
+
+function salesforms_uninstall() {
+  drupal_uninstall_schema('salesforms');
+}

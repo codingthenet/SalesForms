@@ -1,0 +1,7 @@
+; $Id$
+name = "Salesforms"
+description = "Salesforce-webform module for multiple objects and complex mapping."
+core = 6.x
+dependencies[] = salesforce_api
+dependencies[] = webform
+package = Salesforce

@@ -1,0 +1,550 @@
+<?php
+// $Id$
+
+module_load_include('inc', 'salesforms', 'includes/salesforms_admin_functions');
+
+define('SALESFORCE_PATH_SECURITY', SALESFORCE_PATH_ADMIN .'/security');
+define('SALESFORMS_FIELD_TABLE', 'salesforms_safe_fields');
+define('SALESFORMS_OBJECT_TABLE', 'salesforms_object_results');
+define('SALESFORMS_WEBFORM_MAP_TABLE', 'salesforms_fieldmaps');
+
+
+/**
+ * Implementation of hook_perm().
+ */
+
+function salesforms_perm() {
+  return array('administer salesforms');
+}
+
+
+/**
+ * Implementation of hook_init().
+ */
+
+function salesforms_init() {
+  //drupal_add_css( drupal_get_path('module', 'salesforms') . '/salesforms.css' );
+}
+
+
+/**
+ * Implementation of hook_help().
+ */
+
+function salesforms_help($path, $arg) {
+  switch ($path) {
+    case SALESFORCE_PATH_SECURITY:
+      $link = l('objects tab', SALESFORCE_PATH_OBJECT);
+      $output = t('<p>You can enable more objects in the !tab</p>', array('!tab' => $link));
+      break;
+    // This is not working for some reason, so added to page.
+    case 'node/%webform_menu/salesforms':
+      $link = l('help page', 'admin/help/salesforms');
+      $output = t('<p>For more information, read the !help</p>', array('!help' => $link));
+      break;
+    case 'user/help#salesforms':
+    case 'admin/help#salesforms':
+      $message = '<p>The Salesforms module allows you to map webform submissions to Salesforce objects.
+      It offers more control over how this data is imported than the two existing Webform to Salesforce modules (!module1, !module2),
+      with field-level control and object relationship creation (both automatic and pre-set).</p>
+      <h3>To set up your first Salesform:</h3>
+      <ol>
+        <li>Make sure that all required Salesforce objects and relationships exist within Salesforce.
+        Try to use existing objects where appropriate (e.g. Contacts for contact details),
+        and be mindful of how the form will map to the objects.</li>
+        <li>Either !enable that you want to use or ask your administrator to enable them for you.</li>
+        <li>!webform as you usually would.</li>
+        <li>Create the appropriate fields in the Webform tab, keeping in mind what type and format of data is saved in Salesforce.
+        For instance, when inserting Contact information the name must be split into First and Last name.</li>
+        <li>Set your field mappings in the Salesforms tab of your webform. Most will be simple field-to-field maps, but there are additional considerations
+        if you wish to map object relationships;
+          <ul>
+            <li>If you have a reference field that needs to link to an object created by the webform, create a hidden field. For example, if my form
+            creates an Account and a Contact, and the Account has a lookup to the Contact, I must create a hidden field mapped to that lookup field in Account.</li>
+            <li>If you want to create a reference to an existing Salesforce object (say you have already created the Contact), then you again create a hidden field,
+            but insert a Salesforce External Id into the box that appears once the fieldmap has been saved.</li>
+          </ul>
+        </li>
+        <li>Test your form. If it works as intended you will see;
+          <ul>
+            <li>The required Salesforce objects created in Salesforce.</li>
+            <li>Links to the objects stored in the Results>Salesforms tab on the webform.</li>
+          </ul>
+        </li>
+      </ol>';
+      
+      $placeholders = array(
+        '!module1' => l('Salesforce Webform Integration', 'http://drupal.org/project/sf_webform'),
+        '!module2' => l('Salesforce Webform Data Integration', 'http://drupal.org/project/salesforcewebform'),
+        '!webform' => l('Create a new webform', 'node/add/webform'),
+        '!enable' => l('enable the Salesforce fields', 'admin/settings/salesforce/security/fields'),
+      );
+      
+      $output = t($message, $placeholders);
+      break;
+  }
+  
+  return $output;
+}
+
+
+/**
+ * Implementation of hook_menu().
+ *
+ * @TODO
+ *   Implement proper permissions for this tab. Can/should it tie in with webform perms?
+ */
+
+function salesforms_menu() {
+  $items = array();
+  
+  $items["node/%webform_menu/salesforms"] = array(
+    'title' => 'Salesforms',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('salesforms_config_form', 1),
+    'access arguments' => array('administer salesforms'),
+    'file' => 'includes/salesforms_webform_tab.inc',
+    'type' => MENU_LOCAL_TASK,
+  );
+  
+  $items["node/%webform_menu/webform-results/salesforce-objects"] = array(
+    'title' => 'Salesforms',
+    'page callback' => 'salesforms_object_results',
+    'page arguments' => array(1),
+    'access arguments' => array('administer salesforms'),
+    'file' => 'includes/salesforms_webform_tab.inc',
+    'weight' => 5,
+    'type' => MENU_LOCAL_TASK,
+  );
+  
+  $items[SALESFORCE_PATH_SECURITY] = array(
+    'title' => 'Salesforms',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('salesforms_enabled_fields_form'),
+    'access arguments' => array('administer salesforms'),
+    'file' => 'includes/salesforms_admin_forms.inc',
+    'type' => MENU_LOCAL_TASK,
+  );
+  
+  $items[SALESFORCE_PATH_SECURITY . '/fields'] = array(
+    'title' => 'Safe Fields',
+    'type' => MENU_DEFAULT_LOCAL_TASK,
+    'weight' => -10,
+  );
+  
+  $items[SALESFORCE_PATH_SECURITY . '/config'] = array(
+    'title' => 'Field Config',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('salesforms_mapper'),
+    'access arguments' => array('administer salesforms'),
+    'file' => 'includes/salesforms_admin_forms.inc',
+    'type' => MENU_LOCAL_TASK,
+    'weight' => 10,
+  );
+  
+  return $items;
+}
+
+
+/**
+ * Implementation of hook_form_alter().
+ * 
+ * @return
+ *   If the webform has a Salesforce map, add the data handler to the submit process.
+ */
+
+function salesforms_form_alter(&$form, &$form_state, $form_id) {
+  // @TODO
+  //   First check if it's a webform
+  $salesforms_form_ids = salesforms_get_forms();
+  
+  // A couple of debugging statements
+  //printp($form);
+  //printp($form_state['storage']['results']);
+  //$form['#redirect'] = FALSE;
+  
+  // If the form has a Salesforms map, set the Salesforms submission handler
+  if (in_array($form_id, $salesforms_form_ids)) {
+    $form['#submit'][] = '_salesforms_insert_data';
+  }
+}
+
+
+/**
+ * Main data retrieval function - does checking vs. the enabled Salesforce API fieldmaps
+ * to ensure synchronicity. For the moment retrieves ALL Salesforce data for each field and
+ * object, since the Salesforce API misses out info like referenceTo
+ *
+ * @TODO
+ *   Could be improved with a hook on the admin form to update other parts of the SF
+ *   suite when the object list is updated, and with more cached info in Salesforce API
+ *
+ * @return array $salesforms_enabled_objects
+ *   A describeSObjects() call for all enabled objects, with only the enabled field data
+ */
+
+function salesforms_get_config() {
+  // Make sure that any API disabled objects are not enabled in the config
+  _salesforms_check_config();
+  
+  // Retrieve the Salesforce API cached config
+  $api_enabled_objects = array_keys(salesforce_api_fieldmap_objects());
+  
+  // Then retrieve the updated config from the table
+  $query = db_query("SELECT object_name, field_name FROM {".SALESFORMS_FIELD_TABLE."}");
+  
+  // And build the query into an array of fields indexed by object
+  $salesforms_enabled_fields = array();
+  
+  while ($result = db_fetch_array($query)) {
+    $obj = $result['object_name'];
+    $field = $result['field_name'];
+    $salesforms_enabled_fields[$obj][$field] = $field;
+  }
+  
+  // Run a describeSObjects() query using the array of enabled objects
+  // @TODO
+  //   Add this data to the cache - it's a very expensive operation to do a lot
+  $api_describe_objects = salesforce_api_describeSObjects($api_enabled_objects);
+  
+  // Then add in markers for Salesforms enabled fields
+  // @TODO
+  //   Integrate this with the core Salesforce API object permissions
+  
+  // Iterate through the objects in our Salesforce describeSObjects query
+  foreach ($api_describe_objects as $object => $data){
+    // If they're enabled in SalesForms then add a flag
+    if (isset($salesforms_enabled_fields[$object])) {
+      $api_describe_objects[$object]->salesformsEnabled = 1;
+    }
+    // For each field, add a boolean flag if it's enabled
+    foreach ($data->fields as $index => $properties) {
+      if (isset($salesforms_enabled_fields[$object][$properties->name])) {
+        $api_describe_objects[$object]->fields[$index]->salesformsEnabled = 1;
+      }
+    }
+  }
+  
+  // Return a describeSObjects() result with flagged fields and objects
+  return $api_describe_objects;
+}
+
+
+/**
+ * Keeps all fieldmaps in line with the API - is called in all functions where
+ * fieldmaps are retrieved
+ * 
+ * @TODO
+ *   Make both tables use salesforce_object etc
+ */
+
+function _salesforms_check_config() {
+  // Retrieve the Salesforce API cached config
+  $api_enabled_objects = array_keys(salesforce_api_fieldmap_objects());
+  
+  // Delete any enabled fields if the object has been disabled in the Salesforce API
+  db_query("DELETE t1, t2
+            FROM {".SALESFORMS_FIELD_TABLE."} AS t1
+            JOIN {".SALESFORMS_WEBFORM_MAP_TABLE."} AS t2
+            ON t1.fid = t2.fid
+            WHERE object_name
+            NOT IN (".db_placeholders($api_enabled_objects, 'text').")",
+            $api_enabled_objects);
+}
+
+
+/**
+ * This is the function that does all the heavy lifting to insert records.
+ * Standard implementation of a form submission function
+ * 
+ * @return
+ *   If successfully connects to Salesforce, creates required Salesforce objects.
+ * 
+ * @TODO
+ *   Build objects and fields by Salesforce object               DONE
+ *   Check required fields and any other relationships           DONE
+ *   Order by precedence (if any)                                DONE
+ *   Sequentially insert and retrieve reference fields           DONE
+ *   Allow pre-set values for objects using external ids
+ */
+
+function _salesforms_insert_data($form, &$form_state) {
+  $post = $form['#post'];
+  
+  try {
+    // Don't change this, as it's needed for create()s further down
+    $sf = salesforce_api_connect();
+    
+    if (!$sf) {
+      $link = l('Please verify that you have completed your SalesForce credentials', SALESFORCE_PATH_ADMIN);
+      drupal_set_message( t('Unable to connect to SalesForce. !link', array('!link' => $link)), 'error' );
+      return;
+    }
+    
+    // Get the fieldmap, where the Form Field, Salesforce Object, and Salesforce Field
+    // are indexed by the Form Field
+    $map = salesforms_get_map($post['form_id']);
+    
+    // Build an index based on the references
+    $index = _salesforms_build_insert_index($map);
+    
+    // Build Salesforce objects from the saved fieldmap and the posted data
+    $salesforce_objects = _salesforms_build_objects($post['submitted'], $map);
+    
+    $object_ids = array();
+    
+    foreach ($index as $object_name) {
+      // Create the record, using a dummy array since it has to be indexed by number
+      $result = $sf->client->create(array($salesforce_objects[$object_name]), $object_name);
+      // Retrieve the id of the created object, and store it for insertion
+      $object_ids[$object_name] = $result->id;
+      
+      // Save object id into database for results tab
+      db_query("INSERT INTO {".SALESFORMS_OBJECT_TABLE."} (sid, object_type, object_id)
+                VALUES (%d, '%s', '%s')",
+                $form_state['values']['details']['sid'], $object_name, $object_ids[$object_name]
+              );
+      
+      // Insert any reference fields that use the reference
+      foreach ($map as $field_name => $data) {
+        // If there's a reference for the field, and it doesn't have a pre-set
+        // external id, put the correct object id in it
+        if ($data['reference_to'] === $object_name && !empty($data['external_id'])) {
+          $salesforce_objects[$data['object_name']]->$data['field_name'] = $object_ids[$object_name];
+        }
+      }
+    }
+  }
+  catch (Exception $e) {
+    DrupalSalesforce::watchdog(SALESFORCE_LOG_SOME, 'Unable to establish Salesforce connection while issuing describeSObjects API call.', array(), WATCHDOG_ERROR);
+  }
+  
+  //$form_state['storage']['results'] = array();
+  //$form_state['storage']['results']['map'] = $map;
+  //$form_state['storage']['results']['flag'] = $flag;
+  //$form_state['storage']['results']['form'] = $form;
+  //$form_state['storage']['results']['post'] = $form['#post'];*/
+  //$form_state['storage']['results']['index'] = $index;
+  //$form_state['storage']['results']['objects'] = $salesforce_objects;
+  //$form_state['storage']['results']['form_state'] = $form_state;
+  //$form_state['storage']['results']['references'] = $reference_data;
+  
+  // DON'T RETURN OUT OF THIS - PREVENTS REDIRECT TO CONFIRM PAGE
+}
+
+
+/**
+ * A function to create Salesforce-insertable objects
+ * 
+ * @param $submitted array
+ *   The $form['#post']['submitted'] array.
+ * 
+ * @param $map array
+ *   The fieldmap for the current Webform.
+ * 
+ * @return $salesforce_objects array
+ *   An array of [object_name] => stdClass object.
+ */
+
+function _salesforms_build_objects($submitted, $map) {
+  $salesforce_objects = array();
+  
+  // Iterate through the fieldmap
+  foreach ($map as $field_name => $data) {
+    $salesforce_field = $data['field_name'];
+    $salesforce_object = $data['object_name'];
+    
+    // Create an object if there isn't one already set
+    if (!isset($salesforce_objects[$salesforce_object])) {
+      $salesforce_objects[$salesforce_object] = new stdClass();
+    }
+    
+    // If the field uses an external id reference, retrieve the object
+    if (!empty($data['internal_id'])) {
+      $salesforce_objects[$salesforce_object]->$salesforce_field = $data['internal_id'];
+    }
+    else {
+      // Map the field to the object, pulling the value from $submitted
+      $salesforce_objects[$salesforce_object]->$salesforce_field = $submitted[$data['form_field']];
+    }
+  }
+  
+  return $salesforce_objects;
+}
+
+
+/**
+ * Generate a dropdown field for a form, containing a nested
+ * select element of enabled fields by object. The key of each select option is
+ * the object Name, and the display value is the object Label.
+ */
+
+function _salesforms_generate_dropdown() {
+  $salesforms_fieldmaps = salesforms_get_enabled_fields();
+  
+  $dropdown = array(
+    '#type' => 'select',
+    '#options' => array('none' => 'None'),
+  );
+  
+  foreach ($salesforms_fieldmaps as $object_name => $fields) {
+    $object_fieldset = array();
+    
+    foreach ($fields as $field_name => $field_data) {
+      $req = $field_data['required'] ? ' *' : '';
+      $object_fieldset[$field_data['fid']] = $object_name . ' - ' . $field_name . $req;
+    }
+    
+    $dropdown['#options'][$object_name] = $object_fieldset;
+  }
+  
+  return $dropdown;
+}
+
+
+/**
+ * A preformatted print function
+ * 
+ * @param $val
+ *   A variable of any type
+ * 
+ * @return print_r($val)
+ *   A print_r of $val enclosed in <pre> tags
+ */
+
+function printp( $val ) {
+  print '<pre>';
+  print_r($val);
+  print '</pre>';
+}
+
+
+/**
+ * Sorts an array of objects => reference objects to create an insertion index
+ * 
+ * @param $array array
+ *   An associative array where reference objects are indexed by parent object
+ * 
+ * @return $index array
+ *   An array of parent objects in order of insertion
+ * 
+ * @return
+ *   Throws an Exception when an infinite loop is present. 100 iterations shouldn't be limiting.
+ * 
+ * @TODO
+ *   Throws a different Exception if there are no objects without references (need at least one)
+ *   Need to be able to take into account that we may have preset references in the future.
+ */
+
+function _salesforms_build_insert_index($map) {
+  $reference_data = array();
+  
+  // Iterate through the pre-set fieldmap
+  foreach ($map as $field_name => $data) {
+    $salesforce_object = $data['object_name'];
+    $reference = $data['reference_to'];
+    
+    // If the object is not logged, log it
+    if(!isset($reference_data[$salesforce_object])) {
+      $reference_data[$salesforce_object] = array();
+    }
+    
+    // If it is a reference and field and DOES NOT HAVE AN EXTERNAL ID
+    // then log that it is a reference
+    if(!empty($reference) && empty($data['external_id'])) {
+      $reference_data[$salesforce_object][$reference] = $reference;
+    }
+  }
+  
+  $complete = FALSE;
+  
+  // Set up a counter to prevent infinite loops
+  $i = 0;
+  
+  while (!$complete) {
+    $complete = _salesforms_reference_loop(&$reference_data);
+    
+    if ($i > 100) {
+      throw new Exception('Insufficient constraints to build an index');
+      return FALSE;
+    }
+    else {
+      $i++;
+    }
+  }
+  
+  return array_keys($reference_data);
+}
+
+
+/**
+ * Helper function for salesforms_sort_references(). Pushes objects with references
+ * that haven't been inserted to the end of the index until the order is correct.
+ * 
+ * @param $array array
+ *   The array of references from salesforms_sort_references()
+ * 
+ * @return TRUE/FALSE
+ *   Returns true if the index does not have to be altered, so order is correct
+ */
+
+function _salesforms_reference_loop(&$index) {
+  // Set up an array to hold checked (inserted) parent objects
+  $checked = array();
+  
+  // Iterate through the existing index, where references are indexed by parent
+  foreach ($index as $obj_name => $obj_refs) {
+    // If the object has references that have not been inserted, move the object to the end
+    if(count(array_diff($obj_refs, $checked))) {
+      unset($index[$obj_name]);
+      $index[$obj_name] = $obj_refs;
+      return FALSE;
+    }
+    // Otherwise add the object to the $checked array
+    else{
+      $checked[] = $obj_name;
+    }
+  }
+  
+  return TRUE;
+}
+
+
+/**
+ * Selects an object by external id, and returns the object id
+ * 
+ * @param $object string
+ *   The name of the object
+ * 
+ * @param $id string
+ *   The object id string
+ */
+
+function salesforms_get_by_external($object, $id) {
+  try {
+    // Don't change this, as it's needed for create()s further down
+    $sf = salesforce_api_connect();
+    
+    if (!$sf) {
+      $link = l('Please verify that you have completed your SalesForce credentials', SALESFORCE_PATH_ADMIN);
+      drupal_set_message( t('Unable to connect to SalesForce. !link', array('!link' => $link)), 'error' );
+      return;
+    }
+    
+    $describe = salesforce_api_describeSObjects(array($object));
+    
+    foreach ($describe[$object]->fields as $fid => $data) {
+      if (isset($data->externalId)) {
+        $externalId = $data->name;
+      }
+    }
+    
+    $result = $sf->client->query("SELECT Id FROM $object WHERE $externalId = '$id'");
+  }
+  catch (Exception $e) {
+    DrupalSalesforce::watchdog(SALESFORCE_LOG_SOME, 'Unable to establish Salesforce connection while issuing describeSObjects API call.', array(), WATCHDOG_ERROR);
+    return FALSE;
+  }
+  
+  return $result->records[0]->Id;
+}
